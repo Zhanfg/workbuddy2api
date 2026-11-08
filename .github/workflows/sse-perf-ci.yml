@@ -8,6 +8,8 @@ on:
     paths:
       - 'internal/upstream/sse.go'
       - 'internal/upstream/sse_fastpath_test.go'
+      - 'internal/server/logging.go'
+      - 'internal/server/logging_fastpath_test.go'
       - '.github/workflows/sse-perf-ci.yml'
   workflow_dispatch:
 
@@ -39,5 +41,5 @@ jobs:
 
       - name: SSE 340-frame CPU throughput benchmark
         run: |
-          go test ./internal/upstream -run '^ -bench '^BenchmarkStreamHint340Frames -benchmem -benchtime=100x -count=1
-          go test ./internal/server -run '^ -bench '^BenchmarkChatStats340Frames -benchmem -benchtime=100x -count=1
+          go test ./internal/upstream -run TestNeverMatches -bench BenchmarkStreamHint340Frames -benchmem -benchtime=100x -count=1
+          go test ./internal/server -run TestNeverMatches -bench BenchmarkChatStats340Frames -benchmem -benchtime=100x -count=1
