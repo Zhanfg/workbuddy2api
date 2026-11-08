@@ -34,5 +34,10 @@ jobs:
       - name: SSE tests
         run: go test ./internal/upstream -run 'Test(ReadSSELineFastpath|StreamHintPreservesLargeSingleEvent)' -count=1
 
+      - name: SSE usage reader tests
+        run: go test ./internal/server -run 'Test(ChatStatsFastpath|ReadStatsLine|ChatStatsReaderSmallConsumerBuffer)' -count=1
+
       - name: SSE 340-frame CPU throughput benchmark
-        run: go test ./internal/upstream -run '^$' -bench '^BenchmarkStreamHint340Frames$' -benchmem -benchtime=100x -count=1
+        run: |
+          go test ./internal/upstream -run '^ -bench '^BenchmarkStreamHint340Frames -benchmem -benchtime=100x -count=1
+          go test ./internal/server -run '^ -bench '^BenchmarkChatStats340Frames -benchmem -benchtime=100x -count=1
