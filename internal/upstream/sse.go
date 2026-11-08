@@ -28,7 +28,7 @@ func IsEmptyStreamError(err error) bool { return errors.Is(err, errEmptyStream) 
 // 无需像 ReadString 那样先聚合碎片再转字符串。超过缓冲区的完整帧仍按原语义
 // 拼接，既不截断大型 tool payload，也不改变上游 SSE 的行边界和 EOF 行为。
 func readSSELine(br *bufio.Reader) (string, error) {
-	frag, err := br.ReadSlice('\\n')
+	frag, err := br.ReadSlice('\n')
 	if err != bufio.ErrBufferFull {
 		return string(frag), err
 	}
@@ -36,7 +36,7 @@ func readSSELine(br *bufio.Reader) (string, error) {
 	buf := make([]byte, 0, br.Size()*2)
 	for {
 		buf = append(buf, frag...)
-		frag, err = br.ReadSlice('\\n')
+		frag, err = br.ReadSlice('\n')
 		if err != bufio.ErrBufferFull {
 			buf = append(buf, frag...)
 			return string(buf), err
