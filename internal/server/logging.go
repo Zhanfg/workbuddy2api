@@ -52,11 +52,21 @@ type chatStat struct {
 // newChatStat 以请求进入 handler 的时刻为起点构造统计对象；toks 默认 -1（usage 缺失）。
 // budget 为当日积分预算计数器（budget.go），nil = 未接线、不计数。
 func newChatStat(now time.Time, body []byte, stream bool, budget *dailyBudget) *chatStat {
-	mode := "sync"
-	if stream {
-		mode = "stream"
-	}
-	return &chatStat{start: now, model: parseModelFromBody(body), mode: mode, toks: -1, budget: budget}
+    // Compatibility entrypoint for callers that only have the raw JSON body.
+    return newChatStatWithModel(now, parseModelFromBody(body), stream, budget)
+}
+
+// newChatStatWithModel reuses the model already parsed by chatCompletions.
+// Avoid another O(body_bytes) JSON scan for every 1M-context request.
+func newChatStatWithModel(now time.Time, model string, stream bool, budget *dailyBudget) *chatStat {
+    if model == "" {
+        model = "-"
+    }
+    mode := "sync"
+    if stream {
+        mode = "stream"
+    }
+    return &chatStat{start: now, model: model, mode: mode, toks: -1, budget: budget}
 }
 
 // done 幂等落一行表格日志，并把本次请求记入 metrics 聚合（/v1/stats 数据源）。
