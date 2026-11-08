@@ -320,8 +320,17 @@ func hashIndex(key string, n int) int {
 // InjectPromptCacheKey 优先级 1：客户端自带则原值保留）。纳入识别后，这类客户端
 // 无需改配置即可命中粘性。置于最后，绝不抢占 conversation 维度的优先级。
 func ExtractKey(body []byte) string {
+    key, _ := ExtractIdentifiers(body)
+    return key
+}
+
+// ExtractIdentifiers extracts the sticky-affinity key and outgoing
+// X-Conversation-ID in one JSON scan. The latter deliberately does NOT
+// fallback to prompt_cache_key (which only supports sticky affinity).
+// Both legacy exported helpers delegate here to retain their contracts.
+func ExtractIdentifiers(body []byte) (affinityKey, conversationID string) {
 	if len(body) == 0 {
-		return ""
+		return "", ""
 	}
 	// JSON may contain megabytes of chat history, images and tools. Decoding it
 	// into map[string]any allocates a second object graph for all of those
@@ -335,28 +344,28 @@ func ExtractKey(body []byte) string {
 		PromptCacheKey json.RawMessage `json:"prompt_cache_key"`
 	}
 	if err := json.Unmarshal(body, &envelope); err != nil {
-		return ""
+		return "", ""
 	}
 	if len(envelope.Metadata) != 0 {
 		var meta map[string]json.RawMessage
 		if err := json.Unmarshal(envelope.Metadata, &meta); err == nil {
 			if v := stringKey(meta["conversation_id"]); v != "" {
-				return v
+				return v, v
 			}
 			if v := stringKey(meta["conversationId"]); v != "" {
-				return v
+				return v, v
 			}
 		}
 	}
 	if v := stringKey(envelope.ConversationID); v != "" {
-		return v
+		return v, v
 	}
 	if v := stringKey(envelope.ConversationId); v != "" {
-		return v
+		return v, v
 	}
 	// prompt_cache_key is deliberately last: it may not override a real
 	// conversation-level key, including metadata's snake/camel variants.
-	return stringKey(envelope.PromptCacheKey)
+	return stringKey(envelope.PromptCacheKey), ""
 }
 
 // stringKey matches the previous map[string]any assertion: only JSON strings
