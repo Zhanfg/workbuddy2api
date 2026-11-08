@@ -790,7 +790,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	// 仍可用），必须重分配——否则会被钉在这个号上反复失败。
 	// 提取与下方会话头族的聚合键共用同一结果，故**不受粘性开关影响**：粘性未启用
 	// （Session==nil）时聚合键仍应是会话级，而不是退化成轮级。
-	sessKey := session.ExtractKey(body)
+	sessKey, conversationID := session.ExtractIdentifiers(body)
 	// stickyKey 是**粘性专用**键，与 sessKey（会话头族聚合用）分开：
 	// sessKey 为空时（OpenAI 兼容客户端——dsh / Codex 等既无 conversationId 也无
 	// metadata）用首条 user 消息派生会话级 fallback 键，使粘性仍能生效。
@@ -899,7 +899,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	//       也空走 NewMessageID 请求级（TurnRequestID 空键行为）——轮转内捕获
 	//       一次即共享。
 	//   - messageID 在 ChatHeaders 内每条消息生成（消息级独立，无需外部可见）。
-	chatMeta := upstream.ChatMeta{ConversationID: session.ResolveConversationID(body)}
+	chatMeta := upstream.ChatMeta{ConversationID: conversationID}
 	if v := r.Header.Get("X-Conversation-Request-ID"); v != "" {
 		chatMeta.ConversationRequestID = v
 	} else if turnKey != "" && sessKey != "" {
