@@ -39,6 +39,11 @@ jobs:
       - name: SSE usage reader tests
         run: go test ./internal/server -run 'Test(ChatStatsFastpath|ReadStatsLine|ChatStatsReaderSmallConsumerBuffer)' -count=1
 
+      - name: Large-context metadata reuse regression and benchmark
+        run: |
+          go test ./internal/server -run TestChatStatModelReuseMatchesOriginal -count=1
+          go test ./internal/server -run TestNeverMatches -bench BenchmarkChatStat -benchmem -benchtime=100x -count=1
+
       - name: SSE 340-frame CPU throughput benchmark
         run: |
           go test ./internal/upstream -run TestNeverMatches -bench BenchmarkStreamHint340Frames -benchmem -benchtime=100x -count=1
