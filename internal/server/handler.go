@@ -779,7 +779,7 @@ func (h *Handler) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	realm, bareModel := resolveModel(peek.Model)
 
 	// 请求级统计：出口即打一行表格日志（任何路径都会走到）。
-	st := newChatStat(time.Now(), body, peek.Stream, h.budget)
+	st := newChatStatWithModel(time.Now(), peek.Model, peek.Stream, h.budget)
 	defer st.done()
 
 	tried := map[string]bool{}
