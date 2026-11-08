@@ -1,0 +1,38 @@
+name: SSE throughput and memory regression
+
+on:
+  push:
+    branches:
+      - optimize/memory-sse-throughput-v1
+  pull_request:
+    paths:
+      - 'internal/upstream/sse.go'
+      - 'internal/upstream/sse_fastpath_test.go'
+      - '.github/workflows/sse-perf-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build Go code
+        run: go build ./...
+
+      - name: SSE tests
+        run: go test ./internal/upstream -run 'Test(ReadSSELineFastpath|StreamHintPreservesLargeSingleEvent)' -count=1
+
+      - name: SSE 340-frame CPU throughput benchmark
+        run: go test ./internal/upstream -run '^$' -bench '^BenchmarkStreamHint340Frames$' -benchmem -benchtime=100x -count=1
