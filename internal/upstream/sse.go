@@ -24,8 +24,28 @@ var errEmptyStream = errors.New("upstream stream contained no valid data events"
 // upstream_parse 同语义），与客户端断连类错误区分。
 func IsEmptyStreamError(err error) bool { return errors.Is(err, errEmptyStream) }
 
+// readSSELine 走 ReadSlice 的零临时切片快路径：常规 token 帧小于 64 KiB，
+// 无需像 ReadString 那样先聚合碎片再转字符串。超过缓冲区的完整帧仍按原语义
+// 拼接，既不截断大型 tool payload，也不改变上游 SSE 的行边界和 EOF 行为。
+func readSSELine(br *bufio.Reader) (string, error) {
+	frag, err := br.ReadSlice('\\n')
+	if err != bufio.ErrBufferFull {
+		return string(frag), err
+	}
+
+	buf := make([]byte, 0, br.Size()*2)
+	for {
+		buf = append(buf, frag...)
+		frag, err = br.ReadSlice('\\n')
+		if err != bufio.ErrBufferFull {
+			buf = append(buf, frag...)
+			return string(buf), err
+		}
+	}
+}
+
 // Aggregate 读取完整 SSE 流，聚合 delta.content 为单个 OpenAI chat.completion 响应。
-// 分片/半行由 bufio.Reader.ReadString 处理；遇到 "data: [DONE]" 结束。
+// 分片/半行由 readSSELine 处理；遇到 "data: [DONE]" 结束。
 // tool_calls 以流式 delta 到达（按 index 合并：首片带 id/type/name，后续只带 arguments 片段）。
 func Aggregate(r io.Reader) (map[string]any, error) {
 	br := bufio.NewReaderSize(r, 64*1024)
@@ -140,7 +160,7 @@ func Aggregate(r io.Reader) (map[string]any, error) {
 		}
 	}
 	for {
-		line, err := br.ReadString('\n')
+		line, err := readSSELine(br)
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
@@ -559,7 +579,7 @@ func StreamHint(w http.ResponseWriter, r io.Reader, hintFn func(string) string) 
 	validFrames := 0
 readLoop:
 	for {
-		line, err := br.ReadString('\n')
+		line, err := readSSELine(br)
 		trimmed := strings.TrimRight(line, "\r\n")
 		switch {
 		case strings.HasPrefix(trimmed, "data: [DONE]"):
