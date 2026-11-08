@@ -12,6 +12,9 @@ on:
       - 'internal/server/logging_fastpath_test.go'
       - 'internal/session/session.go'
       - 'internal/session/extractkey_fastpath_test.go'
+      - 'internal/session/identifiers_fastpath_test.go'
+      - 'internal/session/ids.go'
+      - 'internal/server/handler.go'
       - '.github/workflows/sse-perf-ci.yml'
   workflow_dispatch:
 
@@ -40,6 +43,11 @@ jobs:
 
       - name: SSE usage reader tests
         run: go test ./internal/server -run 'Test(ChatStatsFastpath|ReadStatsLine|ChatStatsReaderSmallConsumerBuffer)' -count=1
+
+      - name: Single-pass conversation identifiers parity and benchmark
+        run: |
+          go test ./internal/session -run TestExtractIdentifiersMatchesBothLegacyContracts -count=1
+          go test ./internal/session -run TestNeverMatches -bench BenchmarkIdentifiers -benchmem -benchtime=20x -count=1
 
       - name: Session affinity large-context parity and benchmark
         run: |
