@@ -3,11 +3,11 @@ package server
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -52,11 +52,21 @@ type chatStat struct {
 // newChatStat 以请求进入 handler 的时刻为起点构造统计对象；toks 默认 -1（usage 缺失）。
 // budget 为当日积分预算计数器（budget.go），nil = 未接线、不计数。
 func newChatStat(now time.Time, body []byte, stream bool, budget *dailyBudget) *chatStat {
-	mode := "sync"
-	if stream {
-		mode = "stream"
-	}
-	return &chatStat{start: now, model: parseModelFromBody(body), mode: mode, toks: -1, budget: budget}
+    // Compatibility entrypoint for callers that only have the raw JSON body.
+    return newChatStatWithModel(now, parseModelFromBody(body), stream, budget)
+}
+
+// newChatStatWithModel reuses the model already parsed by chatCompletions.
+// Avoid another O(body_bytes) JSON scan for every 1M-context request.
+func newChatStatWithModel(now time.Time, model string, stream bool, budget *dailyBudget) *chatStat {
+    if model == "" {
+        model = "-"
+    }
+    mode := "sync"
+    if stream {
+        mode = "stream"
+    }
+    return &chatStat{start: now, model: model, mode: mode, toks: -1, budget: budget}
 }
 
 // done 幂等落一行表格日志，并把本次请求记入 metrics 聚合（/v1/stats 数据源）。
@@ -125,18 +135,28 @@ func (s *chatStatsReader) CacheTokens() (hit, miss, write int) {
 
 // parseSSELine 解析一行 "data: {...}"：首帧记 TTFB，含 usage 时采信精确 completion_tokens。
 func (s *chatStatsReader) parseSSELine(line string) {
-	line = strings.TrimRight(line, "\r\n")
-	if !strings.HasPrefix(line, "data: ") {
-		return
-	}
-	payload := strings.TrimPrefix(line, "data: ")
-	if payload == "[DONE]" {
-		return
-	}
-	if !s.seen {
-		s.seen = true
-		s.ttfb = time.Since(s.start)
-	}
+    // 保持用于内部回归测试的字符串入口；常规 Read 直接处理字节。
+    s.parseSSELineBytes([]byte(line))
+}
+
+func (s *chatStatsReader) parseSSELineBytes(line []byte) {
+    line = bytes.TrimRight(line, "\r\n")
+    if !bytes.HasPrefix(line, []byte("data: ")) {
+        return
+    }
+    payload := line[len("data: "):]
+    if bytes.Equal(payload, []byte("[DONE]")) {
+        return
+    }
+    if !s.seen {
+        s.seen = true
+        s.ttfb = time.Since(s.start)
+    }
+    // 普通增量帧无 usage：仅做一次字节查找，避免额外的 JSON 解析与 map 分配。
+    // 若正文恰好包含 "usage"，最多多解析一次，不改变原始输出。
+    if !bytes.Contains(payload, []byte("\"usage\"")) {
+        return
+    }
 	var chunk struct {
 		Usage *struct {
 			CompletionTokens int      `json:"completion_tokens"`
@@ -148,7 +168,7 @@ func (s *chatStatsReader) parseSSELine(line string) {
 			PromptCacheWriteTokens int `json:"prompt_cache_write_tokens"`
 		} `json:"usage"`
 	}
-	if json.Unmarshal([]byte(payload), &chunk) != nil || chunk.Usage == nil {
+	if json.Unmarshal(payload, &chunk) != nil || chunk.Usage == nil {
 		return
 	}
 	s.hasUsage = true
@@ -163,22 +183,43 @@ func (s *chatStatsReader) parseSSELine(line string) {
 	}
 }
 
-// Read 返回原始数据，同时解析统计 TTFB/token。
+// readStatsLine uses ReadSlice for normal small SSE chunks. ReadSlice's buffer
+// belongs to bufio.Reader: the caller MUST consume the returned line before
+// invoking the next readStatsLine. Large events are concatenated without truncation.
+func readStatsLine(br *bufio.Reader) ([]byte, error) {
+    fragment, err := br.ReadSlice('\n')
+    if err != bufio.ErrBufferFull {
+        return fragment, err
+    }
+    line := make([]byte, 0, br.Size()*2)
+    for {
+        line = append(line, fragment...)
+        fragment, err = br.ReadSlice('\n')
+        if err != bufio.ErrBufferFull {
+            line = append(line, fragment...)
+            return line, err
+        }
+    }
+}
+
+// Read returns exactly the incoming SSE bytes and collects usage/TTFB metadata.
+// Common single-line events share the reader's buffer until fully copied to p;
+// no extra intermediate string/byte slice is needed for each model token.
 func (s *chatStatsReader) Read(p []byte) (int, error) {
-	if len(s.pend) > 0 {
-		n := copy(p, s.pend)
-		s.pend = s.pend[n:]
-		return n, nil
-	}
-	line, err := s.br.ReadString('\n')
-	if line != "" {
-		s.parseSSELine(line)
-		s.pend = []byte(line)
-		n := copy(p, s.pend)
-		s.pend = s.pend[n:]
-		return n, nil
-	}
-	return 0, err
+    if len(s.pend) > 0 {
+        n := copy(p, s.pend)
+        s.pend = s.pend[n:]
+        return n, nil
+    }
+    line, err := readStatsLine(s.br)
+    if len(line) != 0 {
+        s.parseSSELineBytes(line)
+        s.pend = line
+        n := copy(p, s.pend)
+        s.pend = s.pend[n:]
+        return n, nil
+    }
+    return 0, err
 }
 
 // parseModelFromBody 从请求 JSON 取 model 字段，缺省标 "-"。

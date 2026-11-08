@@ -320,35 +320,65 @@ func hashIndex(key string, n int) int {
 // InjectPromptCacheKey 优先级 1：客户端自带则原值保留）。纳入识别后，这类客户端
 // 无需改配置即可命中粘性。置于最后，绝不抢占 conversation 维度的优先级。
 func ExtractKey(body []byte) string {
+    key, _ := ExtractIdentifiers(body)
+    return key
+}
+
+// ExtractIdentifiers extracts the sticky-affinity key and outgoing
+// X-Conversation-ID in one JSON scan. The latter deliberately does NOT
+// fallback to prompt_cache_key (which only supports sticky affinity).
+// Both legacy exported helpers delegate here to retain their contracts.
+func ExtractIdentifiers(body []byte) (affinityKey, conversationID string) {
 	if len(body) == 0 {
+		return "", ""
+	}
+	// JSON may contain megabytes of chat history, images and tools. Decoding it
+	// into map[string]any allocates a second object graph for all of those
+	// unrelated fields. Decode only the five keys used for session affinity.
+	// Non-string values must remain ignored rather than invalidating the whole
+	// request (e.g. metadata.conversation_id=123, top-level fallback valid).
+	var envelope struct {
+		Metadata       json.RawMessage `json:"metadata"`
+		ConversationID json.RawMessage `json:"conversation_id"`
+		ConversationId json.RawMessage `json:"conversationId"`
+		PromptCacheKey json.RawMessage `json:"prompt_cache_key"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return "", ""
+	}
+	if len(envelope.Metadata) != 0 {
+		var meta map[string]json.RawMessage
+		if err := json.Unmarshal(envelope.Metadata, &meta); err == nil {
+			if v := stringKey(meta["conversation_id"]); v != "" {
+				return v, v
+			}
+			if v := stringKey(meta["conversationId"]); v != "" {
+				return v, v
+			}
+		}
+	}
+	if v := stringKey(envelope.ConversationID); v != "" {
+		return v, v
+	}
+	if v := stringKey(envelope.ConversationId); v != "" {
+		return v, v
+	}
+	// prompt_cache_key is deliberately last: it may not override a real
+	// conversation-level key, including metadata's snake/camel variants.
+	return stringKey(envelope.PromptCacheKey), ""
+}
+
+// stringKey matches the previous map[string]any assertion: only JSON strings
+// are accepted, including the empty string which means "not found".
+func stringKey(raw json.RawMessage) string {
+	if len(raw) == 0 || raw[0] != '"' {
 		return ""
 	}
-	var obj map[string]any
-	if err := json.Unmarshal(body, &obj); err != nil {
+	var value string
+	if json.Unmarshal(raw, &value) != nil {
 		return ""
 	}
-	if meta, ok := obj["metadata"].(map[string]any); ok {
-		if v := strOrEmpty(meta["conversation_id"]); v != "" {
-			return v
-		}
-		if v := strOrEmpty(meta["conversationId"]); v != "" {
-			return v
-		}
-	}
-	if v := strOrEmpty(obj["conversation_id"]); v != "" {
-		return v
-	}
-	if v := strOrEmpty(obj["conversationId"]); v != "" {
-		return v
-	}
-	// 5. prompt_cache_key：OpenAI 系的会话级前缀缓存键，语义就是"同一会话复用同一
-	//    前缀"，与粘性诉求同源。部分客户端（pi-ai 驱动的 dsh 等）把会话 ID 放在这里
-	//    而非 conversation_id——见 upstream.InjectPromptCacheKey 的优先级 1：客户端
-	//    自带 key 即原值保留。放最后，不抢占 conversation 维度的优先级。
-	if v := strOrEmpty(obj["prompt_cache_key"]); v != "" {
-		return v
-	}
-	return ""
+	return value
 }
 
 // StickyFallbackKey 为**无会话标识**的客户端派生会话级稳定粘性键。

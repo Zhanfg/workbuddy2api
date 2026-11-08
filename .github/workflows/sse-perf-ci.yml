@@ -1,0 +1,65 @@
+name: SSE throughput and memory regression
+
+on:
+  push:
+    branches:
+      - optimize/memory-sse-throughput-v1
+  pull_request:
+    paths:
+      - 'internal/upstream/sse.go'
+      - 'internal/upstream/sse_fastpath_test.go'
+      - 'internal/server/logging.go'
+      - 'internal/server/logging_fastpath_test.go'
+      - 'internal/session/session.go'
+      - 'internal/session/extractkey_fastpath_test.go'
+      - 'internal/session/identifiers_fastpath_test.go'
+      - 'internal/session/ids.go'
+      - 'internal/server/handler.go'
+      - '.github/workflows/sse-perf-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build Go code
+        run: go build ./...
+
+      - name: SSE tests
+        run: go test ./internal/upstream -run 'Test(ReadSSELineFastpath|StreamHintPreservesLargeSingleEvent)' -count=1
+
+      - name: SSE usage reader tests
+        run: go test ./internal/server -run 'Test(ChatStatsFastpath|ReadStatsLine|ChatStatsReaderSmallConsumerBuffer)' -count=1
+
+      - name: Single-pass conversation identifiers parity and benchmark
+        run: |
+          go test ./internal/session -run TestExtractIdentifiersMatchesBothLegacyContracts -count=1
+          go test ./internal/session -run TestNeverMatches -bench BenchmarkIdentifiers -benchmem -benchtime=20x -count=1
+
+      - name: Session affinity large-context parity and benchmark
+        run: |
+          go test ./internal/session -run TestExtractKeyFastpathPreservesFallbacksAndLargeBodies -count=1
+          go test ./internal/session -run TestNeverMatches -bench BenchmarkExtractKey -benchmem -benchtime=20x -count=1
+
+      - name: Large-context metadata reuse regression and benchmark
+        run: |
+          go test ./internal/server -run TestChatStatModelReuseMatchesOriginal -count=1
+          go test ./internal/server -run TestNeverMatches -bench BenchmarkChatStat -benchmem -benchtime=100x -count=1
+
+      - name: SSE 340-frame CPU throughput benchmark
+        run: |
+          go test ./internal/upstream -run TestNeverMatches -bench BenchmarkStreamHint340Frames -benchmem -benchtime=100x -count=1
+          go test ./internal/server -run TestNeverMatches -bench BenchmarkChatStats340Frames -benchmem -benchtime=100x -count=1

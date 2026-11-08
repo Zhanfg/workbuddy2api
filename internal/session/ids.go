@@ -23,25 +23,8 @@ import (
 // 语义是"对话 ID"，user_id 回落会污染后台按对话聚合的判据。
 // 缺失返回 ""（不伪造：透传客户端原值优先，客户端没给就不发）。
 func ResolveConversationID(body []byte) string {
-	if len(body) == 0 {
-		return ""
-	}
-	var obj map[string]any
-	if err := json.Unmarshal(body, &obj); err != nil {
-		return ""
-	}
-	if meta, ok := obj["metadata"].(map[string]any); ok {
-		if v := strOrEmpty(meta["conversation_id"]); v != "" {
-			return v
-		}
-		if v := strOrEmpty(meta["conversationId"]); v != "" {
-			return v
-		}
-	}
-	if v := strOrEmpty(obj["conversation_id"]); v != "" {
-		return v
-	}
-	return strOrEmpty(obj["conversationId"])
+    _, conversation := ExtractIdentifiers(body)
+    return conversation
 }
 
 // NewMessageID 生成消息级 ID：32 位 hex（UUID v4 去横线的长度形态），对齐官方

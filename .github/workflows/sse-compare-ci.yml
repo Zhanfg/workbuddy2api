@@ -1,0 +1,38 @@
+name: Compare wb2api SSE usage parser CPU
+
+on:
+  push:
+    branches:
+      - optimize/memory-sse-throughput-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  comparison:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Prepare original master with identical benchmark
+        run: |
+          git fetch --no-tags --depth=1 origin refs/heads/master
+          git worktree add --detach "$RUNNER_TEMP/wb-original" FETCH_HEAD
+          cp internal/server/logging_compare_bench_test.go "$RUNNER_TEMP/wb-original/internal/server/logging_compare_bench_test.go"
+
+      - name: Original master
+        run: |
+          cd "$RUNNER_TEMP/wb-original"
+          go test ./internal/server -run TestNeverMatches -bench BenchmarkChatStatsComparable340Frames -benchmem -benchtime=200x -count=1
+
+      - name: Candidate SSE fast path
+        run: go test ./internal/server -run TestNeverMatches -bench BenchmarkChatStatsComparable340Frames -benchmem -benchtime=200x -count=1
