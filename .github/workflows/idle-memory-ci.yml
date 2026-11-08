@@ -1,0 +1,40 @@
+name: Go process idle memory baseline
+
+on:
+  push:
+    branches:
+      - optimize/memory-sse-throughput-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  idle-memory:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build candidate
+        run: go build -o "$RUNNER_TEMP/wb2api-candidate" ./cmd/server
+
+      - name: Build original parent branch
+        run: |
+          git fetch --no-tags --depth=1 origin refs/heads/master
+          git worktree add --detach "$RUNNER_TEMP/wb2api-master-src" FETCH_HEAD
+          cd "$RUNNER_TEMP/wb2api-master-src"
+          go build -o "$RUNNER_TEMP/wb2api-base" ./cmd/server
+
+      - name: Original master empty-account idle
+        run: python3 tools/bench_idle_memory.py "$RUNNER_TEMP/wb2api-base" --seconds 8
+
+      - name: Candidate empty-account idle
+        run: python3 tools/bench_idle_memory.py "$RUNNER_TEMP/wb2api-candidate" --seconds 8
